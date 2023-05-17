@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -14,8 +15,10 @@ import (
 	"golang.org/x/text/message"
 )
 
-const PREFIX = "000000"
-const VERBOSE = true
+const PREFIX = "0000"
+const N = len(PREFIX)
+const VERBOSE = false
+const THREADS = 3
 
 func unquote(inp string) string {
 	str, _ := strconv.Unquote(`"` + inp + `"`)
@@ -34,11 +37,61 @@ func generateAddress(privateKey *ecdsa.PrivateKey) string {
 	return address
 }
 
+func logPow(x float32, n int) float32 {
+	if n == 0 {
+		return 1
+	}
+	if n == 1 {
+		return x
+	}
+	y := logPow(x, n/2)
+	if n%2 == 0 {
+		return y * y
+	}
+	return x * y * y
+}
+
+func speedTest(tests int, delta time.Duration) {
+	fmt.Println("It took", delta, "to generate", tests, "addresses")
+	fmt.Println("Prefix is ", N, "characters long")
+	// one_iter = logPow((1 / 16), N)
+}
+
 // todo
 // * estimation calculation
 // * generate only letters abcdef
 // * generate only numbers 0123456789
 // * suffix
+
+func search(thread int, wg *sync.WaitGroup) {
+	fmt.Println("Thread", thread, "started")
+	printer := message.NewPrinter(language.English)
+	INIT_T := time.Now()
+
+	for i := 0; ; /*loop til I say don't*/ i++ {
+		var privateKey = generatePrivateKey()
+		var address = generateAddress(privateKey)
+
+		var slice = address[2 : N+2] // account for 0x prefix
+		if slice == PREFIX {
+			fmt.Println("=== Found it! ===")
+			commas := printer.Sprintf("%d", i)
+			fmt.Println(unquote("Iteration:\t"), commas)
+			fmt.Println(unquote("Time:\t\t"), time.Since(INIT_T))
+			fmt.Println(unquote("Private key:\t"), hexutil.Encode(crypto.FromECDSA(privateKey)))
+			fmt.Println(unquote("Address:\t"), address)
+			wg.Done()
+			break
+		} else if VERBOSE && i%(30*477) == 0 {
+			fmt.Println("Searching...")
+			fmt.Println(unquote("> Slice:\t"), slice)
+			commas := printer.Sprintf("%d", i)
+			fmt.Println(unquote("> Iteration:\t"), commas)
+			fmt.Println(unquote("> Time:\t\t"), time.Since(INIT_T))
+			speedTest(i, time.Since(INIT_T))
+		}
+	}
+}
 
 func main() {
 	_, err := strconv.ParseInt(PREFIX, 16, 64)
@@ -47,28 +100,13 @@ func main() {
 		os.Exit(128)
 	}
 
-	p := message.NewPrinter(language.English)
-	INIT_T := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(THREADS)
 
-	for i := 0; ; i++ {
-		var privateKey = generatePrivateKey()
-		var address = generateAddress(privateKey)
-
-		var slice = address[2 : len(PREFIX)+2] // account for 0x prefix
-		if slice == PREFIX {
-			fmt.Println("=== Found it! ===")
-			commas := p.Sprintf("%d", i)
-			fmt.Println(unquote("Iteration:\t"), commas)
-			fmt.Println(unquote("Time:\t\t"), time.Since(INIT_T))
-			fmt.Println(unquote("Private key:\t"), hexutil.Encode(crypto.FromECDSA(privateKey)))
-			fmt.Println(unquote("Address:\t"), address)
-			break
-		} else if VERBOSE && i%(30*477) == 0 {
-			fmt.Println("Searching...")
-			fmt.Println(unquote("> Slice:\t"), slice)
-			commas := p.Sprintf("%d", i)
-			fmt.Println(unquote("> Iteration:\t"), commas)
-			fmt.Println(unquote("> Time:\t\t"), time.Since(INIT_T))
-		}
+	for thread := 0; thread < THREADS; thread++ {
+		go search(thread, &wg)
+		defer wg.Done()
 	}
+	wg.Wait()
+
 }
